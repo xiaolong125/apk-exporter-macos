@@ -9,4 +9,7 @@
 - `.app` 通过 `codesign --verify --deep --strict` 本地签名验证，Info.plist 格式有效，ZIP 完整性验证通过。
 - 1.0.0 DMG 通过 `hdiutil verify` 完整性校验，并以只读方式挂载验证：包含版本为 1.0.0 的应用、指向 `/Applications` 的快捷方式及安装说明；镜像内应用通过严格签名校验，验证后已推出。
 
-当前产物为 arm64 本地签名版本，未进行开发者证书签名或 Apple 公证。未在 Intel Mac 上测试。应用列表按包名显示；读取主用户空间，导出原始 APK，不导出应用数据、不合并或重新签名 APK。
+- Universal DMG 通过完整性、只读挂载及签名验证，镜像内主程序和 ADB 均包含 `arm64` 与 `x86_64`。Intel 主程序的最低系统版本已核对为 macOS 14.0，内置 ADB 已通过 Rosetta 以 x86_64 成功运行。
+- 通过 Rosetta 运行 `arch -x86_64 /usr/bin/swift test --arch x86_64`：9 项自动化测试通过，1 项可选真机测试跳过，0 项失败；测试目标为 `x86_64-apple-macos14.0`。
+
+当前推荐产物为 Universal 本地签名版本，未进行开发者证书签名或 Apple 公证。尚未在 Intel 实体 Mac 上测试。应用列表按包名显示；读取主用户空间，导出原始 APK，不导出应用数据、不合并或重新签名 APK。

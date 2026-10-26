@@ -6,7 +6,7 @@
 
 ## 使用
 
-1. 从 [v1.0.0 Release](https://github.com/xiaolong125/apk-exporter-macos/releases/tag/v1.0.0) 下载 DMG，打开后将 `APK Exporter.app` 拖入 `Applications`，然后从“应用程序”启动（macOS 14 或更新版本；当前下载包适用于 Apple Silicon）。
+1. 从 [v1.0.0 Release](https://github.com/xiaolong125/apk-exporter-macos/releases/tag/v1.0.0) 下载 **Universal DMG**，打开后将 `APK Exporter.app` 拖入 `Applications`，然后从“应用程序”启动。要求 macOS 14 或更新版本，同一个 Universal 安装包同时支持 Apple Silicon 和 Intel Mac。
 2. 手机开启开发者选项 → USB 调试，通过数据线连接 Mac，并在手机上允许调试。
 3. 选择左侧设备，通过**包名**搜索应用。当前读取手机主用户（user 0），不读取工作资料或其他用户空间。
 4. 点击应用右侧的“导出”，或勾选多个应用后点击“导出所选”。默认保存到 `~/Downloads/APK Exports`，可更改。
@@ -28,7 +28,7 @@ cd apk-exporter-macos
 bash scripts/build-app.sh
 ```
 
-默认构建当前 Mac 的架构；指定其他架构可用 `BUILD_ARCH=x86_64 bash scripts/build-app.sh`。`ADB_BINARY=/path/to/adb` 可指定要打包的 ADB。
+默认分别构建 `arm64` 和 `x86_64`，再合并为 Universal 应用。单架构构建可用 `BUILD_ARCH=x86_64 bash scripts/build-app.sh` 或 `BUILD_ARCH=arm64 bash scripts/build-app.sh`。`ADB_BINARY=/path/to/adb` 可指定要打包的 ADB；构建脚本会检查主程序与 ADB 均包含目标架构，Universal 构建需要双架构 ADB。
 
 应用、带版本号的 DMG 和 ZIP 位于 `dist/`，应用版本由 `VERSION` 文件管理。DMG 包含应用、`Applications` 快捷方式和安装说明。若已有构建完成的应用，可运行 `bash scripts/build-dmg.sh` 单独生成 DMG。本地构建使用 ad hoc 签名；面向其他 Mac 正式分发时，需要开发者证书签名及 Apple 公证。
 
