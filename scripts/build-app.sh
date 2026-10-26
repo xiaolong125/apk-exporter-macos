@@ -48,4 +48,5 @@ fi
 codesign --force --sign - "$APP/Contents/Resources/adb"
 codesign --force --sign - "$APP"
 ditto -c -k --keepParent "$APP" "$PROJECT_ROOT/dist/APK-Exporter-$APP_VERSION-macOS-$BUILD_ARCH.zip"
+BUILD_ARCH="$BUILD_ARCH" bash "$PROJECT_ROOT/scripts/build-dmg.sh"
 echo "已生成：$APP"
