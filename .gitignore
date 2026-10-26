@@ -1,0 +1,12 @@
+.build/
+dist/
+.DS_Store
+.swiftpm/
+*.apk
+*.apks
+*.aab
+exports/
+*.keystore
+*.jks
+.env
+.env.*
