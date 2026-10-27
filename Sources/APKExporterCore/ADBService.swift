@@ -17,8 +17,18 @@ public struct AndroidDevice: Identifiable, Hashable, Sendable {
 
 public struct InstalledPackage: Identifiable, Hashable, Sendable {
     public let id: String
-    public var title: String { id.split(separator: ".").suffix(2).joined(separator: ".") }
-    public init(id: String) { self.id = id }
+    public let name: String
+    public var title: String { name }
+    public init(id: String, name: String? = nil) {
+        self.id = id
+        let label = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        self.name = label.isEmpty ? id : label
+    }
+
+    public func matches(_ query: String) -> Bool {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty || name.localizedCaseInsensitiveContains(text) || id.localizedCaseInsensitiveContains(text)
+    }
 }
 
 public struct ExportResult: Identifiable, Sendable {
@@ -75,7 +85,13 @@ private final class ProcessControl: @unchecked Sendable {
 
 public struct ADBService: Sendable {
     public let executable: URL
-    public init(executable: URL) { self.executable = executable }
+    private let catalogArchive: URL?
+    public init(executable: URL, catalogArchive: URL? = nil) {
+        self.executable = executable
+        self.catalogArchive = catalogArchive
+            ?? Bundle.main.url(forResource: "AppCatalog", withExtension: "jar")
+            ?? Bundle.module.url(forResource: "AppCatalog", withExtension: "jar")
+    }
 
     public static func locateExecutable() -> URL? {
         let home = FileManager.default.homeDirectoryForCurrentUser
@@ -168,7 +184,50 @@ public struct ADBService: Sendable {
     public func packages(device: String, includeSystem: Bool) async throws -> [InstalledPackage] {
         var args = ["-s", device, "shell", "pm", "list", "packages", "--user", "0"]
         if !includeSystem { args.append("-3") }
-        return Self.parsePackages(try await run(args))
+        let packages = Self.parsePackages(try await run(args))
+        guard !packages.isEmpty else { return [] }
+        guard let catalogArchive else {
+            throw ExporterError.message("应用名称读取组件缺失，请重新下载完整的 APK Exporter.app。")
+        }
+        let remote = "/data/local/tmp/apk-exporter-catalog-\(UUID().uuidString).jar"
+        let output: String
+        do {
+            _ = try await run(["-s", device, "push", catalogArchive.path, remote])
+            output = try await run(["-s", device, "shell", "CLASSPATH=\(remote)", "app_process",
+                                    "/system/bin", "local.apkexporter.AppCatalog", includeSystem ? "all" : "third-party"], timeout: 90)
+        } catch {
+            await removeCatalog(device: device, remote: remote)
+            throw error
+        }
+        await removeCatalog(device: device, remote: remote)
+        try Task.checkCancellation()
+        return try Self.applyCatalog(output, to: packages)
+    }
+
+    private func removeCatalog(device: String, remote: String) async {
+        // Cleanup also runs when the parent list operation has been cancelled.
+        await Task.detached {
+            _ = try? await self.run(["-s", device, "shell", "rm", "-f", remote], timeout: 10)
+        }.value
+    }
+
+    public static func applyCatalog(_ output: String, to packages: [InstalledPackage]) throws -> [InstalledPackage] {
+        let prefix = "APK_EXPORTER_CATALOG:"
+        guard let line = output.components(separatedBy: .newlines).last(where: { $0.hasPrefix(prefix) }),
+              let data = String(line.dropFirst(prefix.count)).data(using: .utf8) else {
+            throw ExporterError.message("未能读取应用名称，请重新连接手机后刷新。")
+        }
+        struct Label: Decodable { let id: String; let name: String }
+        let labels: [Label]
+        do { labels = try JSONDecoder().decode([Label].self, from: data) }
+        catch { throw ExporterError.message("手机返回的应用名称列表格式无效，请刷新重试。") }
+        var names: [String: String] = [:]
+        for label in labels { names[label.id] = label.name }
+        // The authoritative list comes from pm with explicit --user 0 and -3.
+        return packages.map { InstalledPackage(id: $0.id, name: names[$0.id]) }.sorted {
+            let order = $0.name.localizedStandardCompare($1.name)
+            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+        }
     }
 
     public func export(package: String, device: String, destination: URL,

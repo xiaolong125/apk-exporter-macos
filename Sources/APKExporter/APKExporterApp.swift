@@ -170,7 +170,7 @@ struct ContentView: View {
         VStack(spacing: 16) {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Palette.muted)
-                TextField("搜索包名，例如 com.luna.music", text: $model.search)
+                TextField("搜索应用名称或包名，例如 汽水音乐", text: $model.search)
                     .textFieldStyle(.plain).font(.system(size: 13))
                 if !model.search.isEmpty {
                     Button { model.search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.muted) }
@@ -207,7 +207,7 @@ struct ContentView: View {
                     Label(model.readyDevice == nil ? "连接你的 Android 手机" : "没有找到应用",
                           systemImage: model.readyDevice == nil ? "cable.connector" : "magnifyingglass")
                 } description: {
-                    Text(model.readyDevice == nil ? "开启 USB 调试并允许连接，然后点击刷新。" : "尝试其他包名，或开启“显示系统应用”。")
+                    Text(model.readyDevice == nil ? "开启 USB 调试并允许连接，然后点击刷新。" : "尝试其他应用名称或包名，或开启“显示系统应用”。")
                 } actions: {
                     if model.readyDevice == nil {
                         Button("刷新设备") { model.refresh() }.disabled(model.isRefreshing)
@@ -249,7 +249,7 @@ struct ContentView: View {
 
     private func appRow(_ app: InstalledPackage) -> some View {
         HStack(spacing: 14) {
-            Toggle("选择 \(app.id)", isOn: Binding(
+            Toggle("选择 \(app.name)（\(app.id)）", isOn: Binding(
                 get: { model.selection.contains(app.id) },
                 set: { if $0 { model.selection.insert(app.id) } else { model.selection.remove(app.id) } }
             )).labelsHidden().toggleStyle(.checkbox).disabled(model.isExporting)

@@ -35,7 +35,7 @@ final class ExporterModel {
     private let service: ADBService?
 
     init() {
-        service = ADBService.locateExecutable().map(ADBService.init)
+        service = ADBService.locateExecutable().map { ADBService(executable: $0) }
         if let path = UserDefaults.standard.string(forKey: "exportDirectory") {
             destination = URL(fileURLWithPath: path)
         } else {
@@ -45,8 +45,7 @@ final class ExporterModel {
     }
 
     var visiblePackages: [InstalledPackage] {
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return query.isEmpty ? packages : packages.filter { $0.id.localizedCaseInsensitiveContains(query) }
+        packages.filter { $0.matches(search) }
     }
     var readyDevice: AndroidDevice? { devices.first { $0.id == selectedDevice && $0.isReady } }
     var selectedPackages: [InstalledPackage] { packages.filter { selection.contains($0.id) } }

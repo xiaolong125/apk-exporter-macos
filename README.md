@@ -8,7 +8,7 @@
 
 1. 从 [v1.0.0 Release](https://github.com/xiaolong125/apk-exporter-macos/releases/tag/v1.0.0) 下载 **Universal DMG**，打开后将 `APK Exporter.app` 拖入 `Applications`，然后从“应用程序”启动。要求 macOS 14 或更新版本，同一个 Universal 安装包同时支持 Apple Silicon 和 Intel Mac。
 2. 手机开启开发者选项 → USB 调试，通过数据线连接 Mac，并在手机上允许调试。
-3. 选择左侧设备，通过**包名**搜索应用。当前读取手机主用户（user 0），不读取工作资料或其他用户空间。
+3. 选择左侧设备，列表显示**真实应用名称和包名**。搜索框同时支持名称（如“汽水音乐”“微信”）和包名，不区分英文字母大小写。当前读取手机主用户（user 0），不读取工作资料或其他用户空间。
 4. 点击应用右侧的“导出”，或勾选多个应用后点击“导出所选”。默认保存到 `~/Downloads/APK Exports`，可更改。
 5. 完成后点击“在 Finder 中显示”。每个应用保存到独立目录，包含原始 APK、导出信息和安装说明。
 
@@ -32,6 +32,16 @@ bash scripts/build-app.sh
 
 应用、带版本号的 DMG 和 ZIP 位于 `dist/`，应用版本由 `VERSION` 文件管理。DMG 包含应用、`Applications` 快捷方式和安装说明。若已有构建完成的应用，可运行 `bash scripts/build-dmg.sh` 单独生成 DMG。本地构建使用 ad hoc 签名；面向其他 Mac 正式分发时，需要开发者证书签名及 Apple 公证。
 
+应用名称由手机的 PackageManager 读取，包含当前设备语言及已安装拆分资源中的名称。应用内置小型 `AppCatalog.jar`：通过 ADB 临时复制到 `/data/local/tmp`，在 shell 身份下运行，读取后删除；不在手机安装应用，不需要 Root，不读取账号或应用数据。单个名称缺失时保留完整包名，不再将包名片段当作应用名。
+
+读取程序源码位于 `DeviceHelper/src/`，预编译资源随源码提交。修改读取程序后，使用 JDK、Android SDK 36、build-tools 36.0.0 和 Python 3 重新生成：
+
+```bash
+bash scripts/build-device-helper.sh
+```
+
+可通过 `ANDROID_JAR` 与 `D8_BINARY` 指定其他 SDK 路径。正常构建 Mac 应用及日常使用无需 Java、Python 或 Android SDK；构建 Mac 应用仍需提供前述 ADB。
+
 ## 验证
 
 ```bash
@@ -39,7 +49,7 @@ swift test --disable-sandbox --scratch-path .build \
   -Xswiftc -module-cache-path -Xswiftc .build/ModuleCache
 ```
 
-测试覆盖多设备状态、列表解析、路径含空格、单包与拆分包导出、原始字节保持、重复导出、失败清理、无效包名、超时和取消。
+测试覆盖多设备状态、真实名称与包名搜索、中文和特殊字符、读取名称后清理临时程序、列表解析、路径含空格、单包与拆分包导出、原始字节保持、重复导出、失败清理、无效包名、超时和取消。
 
 可选真机测试会读取设备并把指定应用导出至临时目录，逐个比较手机与本机 APK 的 SHA-256，完成后清理；不会安装、卸载或修改手机应用：
 

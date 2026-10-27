@@ -31,6 +31,86 @@ final class ADBServiceTests: XCTestCase {
         XCTAssertEqual(try ADBService.parseAPKPaths("package:/data/app/~~abc==/base.apk\r\npackage:/data/app/~~abc==/split_en.apk\r\n").count, 2)
     }
 
+    func testCatalogResolvesChineseNamesAndSearchesBothFields() throws {
+        let output = """
+        Android runtime diagnostic
+        APK_EXPORTER_CATALOG:[{"id":"com.luna.music","name":"汽水音乐"},{"id":"com.example.claude","name":"Claude"},{"id":"other.user.only","name":"其他用户"}]
+        """
+        let apps = try ADBService.applyCatalog(output, to: [
+            InstalledPackage(id: "com.luna.music"), InstalledPackage(id: "com.example.claude"),
+            InstalledPackage(id: "com.example.missing")
+        ])
+        XCTAssertEqual(apps.count, 3)
+        let music = try XCTUnwrap(apps.first { $0.id == "com.luna.music" })
+        XCTAssertEqual(music.title, "汽水音乐")
+        XCTAssertTrue(music.matches("汽水"))
+        XCTAssertTrue(music.matches("  音乐  "))
+        XCTAssertTrue(music.matches("LUNA.MUSIC"))
+        XCTAssertFalse(music.matches("微信"))
+        XCTAssertTrue(music.matches("  "))
+        XCTAssertTrue(try XCTUnwrap(apps.first { $0.id == "com.example.claude" }).matches("cLaUdE"))
+        XCTAssertEqual(apps.first { $0.id == "com.example.missing" }?.title, "com.example.missing")
+    }
+
+    func testCatalogHandlesEscapedNamesAndRejectsInvalidResponses() throws {
+        let labels = [["id": "com.test", "name": "引号\"、反斜杠\\、换行\n和 Emoji 🎵"]]
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: labels), as: UTF8.self)
+        let apps = try ADBService.applyCatalog("APK_EXPORTER_CATALOG:" + json, to: [InstalledPackage(id: "com.test")])
+        XCTAssertEqual(apps[0].name, labels[0]["name"])
+        XCTAssertThrowsError(try ADBService.applyCatalog("permission denied", to: []))
+        XCTAssertThrowsError(try ADBService.applyCatalog("APK_EXPORTER_CATALOG:invalid", to: []))
+        XCTAssertEqual(InstalledPackage(id: "com.test", name: "  ").title, "com.test")
+    }
+
+    func testCatalogReadCleansUpRemoteHelper() async throws {
+        let (root, _) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let executable = root.appendingPathComponent("fake adb")
+        let log = root.appendingPathComponent("calls")
+        let script = """
+        #!/bin/sh
+        printf '%s\\n' "$*" >> '\(log.path)'
+        case "$*" in
+          *'pm list packages'*) printf 'package:com.luna.music\\n' ;;
+          *'app_process'*) printf 'APK_EXPORTER_CATALOG:[{"id":"com.luna.music","name":"汽水音乐"}]\\n' ;;
+        esac
+        """
+        try script.write(to: executable, atomically: true, encoding: .utf8)
+        let service = ADBService(executable: executable)
+        let packages = try await service.packages(device: "fixture", includeSystem: false)
+        XCTAssertEqual(packages.first?.name, "汽水音乐")
+        var calls = try String(contentsOf: log, encoding: .utf8)
+        XCTAssertTrue(calls.contains("--user 0 -3"))
+        XCTAssertTrue(calls.contains("push "))
+        XCTAssertTrue(calls.contains("shell rm -f /data/local/tmp/apk-exporter-catalog-"))
+        let failedScript = script.replacingOccurrences(of: "printf 'APK_EXPORTER_CATALOG:[{\"id\":\"com.luna.music\",\"name\":\"汽水音乐\"}]\\n'", with: "printf 'permission denied' >&2; exit 1")
+        XCTAssertNotEqual(failedScript, script)
+        try failedScript.write(to: executable, atomically: true, encoding: .utf8)
+        do {
+            _ = try await service.packages(device: "fixture", includeSystem: true)
+            XCTFail("Should report failed name read")
+        } catch { XCTAssertTrue(error.localizedDescription.contains("permission denied")) }
+        calls = try String(contentsOf: log, encoding: .utf8)
+        XCTAssertEqual(calls.components(separatedBy: "shell rm -f ").count - 1, 2)
+    }
+
+    func testLiveDeviceAppNames() async throws {
+        guard let serial = ProcessInfo.processInfo.environment["APK_EXPORTER_LIVE_SERIAL"],
+              let adb = ADBService.locateExecutable() else { throw XCTSkip("Optional live device test") }
+        let service = ADBService(executable: adb)
+        let apps = try await service.packages(device: serial, includeSystem: false)
+        let music = try XCTUnwrap(apps.first { $0.id == "com.luna.music" })
+        XCTAssertEqual(music.name, "汽水音乐")
+        XCTAssertTrue(music.matches("汽水"))
+        XCTAssertTrue(music.matches("com.luna.music"))
+        let wechat = try XCTUnwrap(apps.first { $0.id == "com.tencent.mm" })
+        XCTAssertEqual(wechat.name, "微信")
+        let all = try await service.packages(device: serial, includeSystem: true)
+        XCTAssertGreaterThanOrEqual(all.count, apps.count)
+        XCTAssertTrue(all.contains { $0.id == "com.luna.music" && $0.name == "汽水音乐" })
+        print("Live labels verified: \(apps.count) third-party, \(all.count) total; 汽水音乐 / 微信")
+    }
+
     private func fixture(failSplit: Bool = false, single: Bool = false) throws -> (URL, ADBService) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("APK Exporter tests \(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

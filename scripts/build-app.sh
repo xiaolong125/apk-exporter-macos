@@ -35,6 +35,7 @@ else
   cp "${BUILT_BINARIES[0]}" "$APP/Contents/MacOS/APKExporter"
 fi
 cp "$ADB_BINARY" "$APP/Contents/Resources/adb"
+cp "$PROJECT_ROOT/Sources/APKExporterCore/Resources/AppCatalog.jar" "$APP/Contents/Resources/AppCatalog.jar"
 lipo "$APP/Contents/MacOS/APKExporter" -verify_arch "${TARGET_ARCHS[@]}"
 lipo "$APP/Contents/Resources/adb" -verify_arch "${TARGET_ARCHS[@]}"
 chmod +x "$APP/Contents/MacOS/APKExporter" "$APP/Contents/Resources/adb"
