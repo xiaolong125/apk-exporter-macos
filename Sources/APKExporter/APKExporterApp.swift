@@ -19,13 +19,16 @@ struct APKExporterApp: App {
             CommandMenu("设备") {
                 Button("刷新设备与应用") { model.refresh() }
                     .keyboardShortcut("r")
-                    .disabled(model.isExporting || model.isRefreshing)
+                    .disabled(model.isBusy || model.isRefreshing)
                 Button("导出所选应用") { model.export() }
                     .keyboardShortcut("e")
                     .disabled(!model.canExport)
+                Button("安装 APK…") { model.openInstaller() }
+                    .keyboardShortcut("i")
+                    .disabled(model.isBusy || model.isLoading || model.isRefreshing)
                 Button("取消选择") { model.clearSelection() }
                     .keyboardShortcut("a", modifiers: [.command, .shift])
-                    .disabled(model.selection.isEmpty || model.isExporting)
+                    .disabled(model.selection.isEmpty || model.isBusy)
             }
         }
     }
@@ -56,6 +59,7 @@ struct ContentView: View {
         .foregroundStyle(Palette.ink)
         .tint(Palette.green)
         .task { model.refresh() }
+        .sheet(isPresented: $model.showInstallSheet) { installationSheet }
         .alert(model.notice?.title ?? "提示", isPresented: Binding(get: { model.notice != nil }, set: { if !$0 { model.notice = nil } })) {
             if let directory = model.notice?.directory {
                 Button("打开导出文件夹") { NSWorkspace.shared.open(directory) }
@@ -86,7 +90,7 @@ struct ContentView: View {
                         Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .medium))
                     }
                     .buttonStyle(.plain)
-                    .disabled(model.isExporting || model.isRefreshing)
+                    .disabled(model.isBusy || model.isRefreshing)
                     .help("刷新设备（⌘R）")
                 }
                 if model.isRefreshing { ProgressView().controlSize(.small) }
@@ -120,7 +124,7 @@ struct ContentView: View {
                         .overlay(RoundedRectangle(cornerRadius: 10).stroke(model.selectedDevice == device.id ? Palette.green.opacity(0.2) : .clear))
                     }
                     .buttonStyle(.plain)
-                    .disabled(model.isExporting || !device.isReady)
+                    .disabled(model.isBusy || !device.isReady)
                 }
             }
 
@@ -131,7 +135,7 @@ struct ContentView: View {
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Palette.muted).lineLimit(3).textSelection(.enabled)
                 Button("更改文件夹…") { model.chooseDestination() }
-                    .font(.system(size: 12)).disabled(model.isExporting)
+                    .font(.system(size: 12)).disabled(model.isBusy)
             }
 
             Spacer(minLength: 0)
@@ -159,6 +163,11 @@ struct ContentView: View {
                     .font(.system(size: 13)).foregroundStyle(Palette.muted)
             }
             Spacer()
+            Button { model.openInstaller() } label: {
+                Label("安装 APK…", systemImage: "square.and.arrow.up")
+            }
+            .controlSize(.large)
+            .disabled(model.isBusy || model.isLoading || model.isRefreshing)
             Text("USB / ADB")
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(Palette.green).padding(.horizontal, 10).padding(.vertical, 6)
@@ -183,13 +192,13 @@ struct ContentView: View {
                     .font(.system(size: 12, weight: .medium)).foregroundStyle(Palette.muted)
                 Spacer()
                 Toggle("显示系统应用", isOn: $model.includeSystem)
-                    .toggleStyle(.checkbox).font(.system(size: 12)).disabled(model.isExporting)
+                    .toggleStyle(.checkbox).font(.system(size: 12)).disabled(model.isBusy)
                 Button("全选结果") { model.selection.formUnion(model.visiblePackages.map(\.id)) }
                     .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Palette.green)
-                    .disabled(model.isExporting || model.visiblePackages.isEmpty)
+                    .disabled(model.isBusy || model.visiblePackages.isEmpty)
                 Button("取消选择") { model.clearSelection() }
                     .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Palette.muted)
-                    .disabled(model.isExporting || model.selection.isEmpty)
+                    .disabled(model.isBusy || model.selection.isEmpty)
             }
         }.padding(.horizontal, 30).padding(.bottom, 16)
     }
@@ -236,6 +245,9 @@ struct ContentView: View {
                                     Spacer()
                                     Text("\(result.apkFiles.count) 个 APK · \(ByteCountFormatter.string(fromByteCount: result.bytes, countStyle: .file))")
                                         .font(.system(size: 11)).foregroundStyle(Palette.muted)
+                                    Button("安装到手机") { model.openInstaller(path: result.directory) }
+                                        .font(.system(size: 11))
+                                        .disabled(model.isBusy || model.isLoading || model.isRefreshing)
                                     Button("在 Finder 中显示") { model.reveal(result) }.font(.system(size: 11))
                                 }
                             }
@@ -252,7 +264,7 @@ struct ContentView: View {
             Toggle("选择 \(app.name)（\(app.id)）", isOn: Binding(
                 get: { model.selection.contains(app.id) },
                 set: { if $0 { model.selection.insert(app.id) } else { model.selection.remove(app.id) } }
-            )).labelsHidden().toggleStyle(.checkbox).disabled(model.isExporting)
+            )).labelsHidden().toggleStyle(.checkbox).disabled(model.isBusy)
             Image(systemName: "app.dashed")
                 .font(.system(size: 22)).foregroundStyle(Palette.green)
                 .frame(width: 42, height: 42)
@@ -266,7 +278,7 @@ struct ContentView: View {
             Button { model.export([app]) } label: {
                 Label("导出", systemImage: "square.and.arrow.down")
                     .font(.system(size: 12, weight: .medium))
-            }.buttonStyle(.bordered).disabled(model.isExporting || model.isLoading || model.isRefreshing)
+            }.buttonStyle(.bordered).disabled(model.isBusy || model.isLoading || model.isRefreshing)
         }.padding(.vertical, 12).padding(.horizontal, 6)
         .background(model.selection.contains(app.id) ? Palette.green.opacity(0.035) : .clear)
     }
@@ -277,6 +289,9 @@ struct ContentView: View {
                 ProgressView(value: model.progress).tint(Palette.green)
                 Text(model.exportDetail).font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(Palette.muted).lineLimit(1)
+            }
+            if model.isInstalling {
+                HStack { ProgressView().controlSize(.small); Text("正在安装，请在手机上确认安装请求…").font(.system(size: 12)) }
             }
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 5) {
@@ -308,5 +323,60 @@ struct ContentView: View {
 
     private func sectionLabel(_ text: String) -> some View {
         Text(text).font(.system(size: 10, weight: .semibold)).foregroundStyle(Palette.muted)
+    }
+
+    private var installationSheet: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("安装 APK 到手机").font(.system(size: 23, weight: .bold))
+            Text(model.readyDevice.map { "目标设备：\($0.model)（\($0.id)）" } ?? "请先关闭此窗口，连接手机并选择设备。")
+                .font(.system(size: 12)).foregroundStyle(Palette.muted)
+            Text("粘贴 APK 路径或选择单个应用的导出文件夹。拆分 APK 会自动一起安装。")
+                .font(.system(size: 13))
+            HStack {
+                TextField("APK 文件或导出文件夹的完整路径", text: $model.installPath)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: model.installPath) { _, _ in model.prepareInstallation() }
+                Button("浏览…") { model.chooseInstallationPath() }
+            }.disabled(model.isInstalling)
+            if let plan = model.installPlan {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(plan.isSplit ? "拆分 APK（一起安装）" : "单个 APK") · \(plan.apkFiles.count) 个文件 · \(ByteCountFormatter.string(fromByteCount: plan.bytes, countStyle: .file))")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(plan.source.path).font(.system(size: 11)).foregroundStyle(Palette.muted).textSelection(.enabled)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(plan.apkFiles, id: \.self) { file in
+                                Label(file.lastPathComponent, systemImage: "doc.zipper")
+                                    .font(.system(size: 12, design: .monospaced))
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }.frame(maxHeight: 140)
+                }
+                .padding(14).background(Palette.background, in: RoundedRectangle(cornerRadius: 10))
+            }
+            Text("保留 APK 原始签名。已安装时尝试保留数据更新；签名不一致、版本降级或设备不兼容时会显示错误。")
+                .font(.system(size: 11)).foregroundStyle(Palette.muted)
+            if let error = model.installError {
+                ScrollView { Text(error).font(.system(size: 12)).foregroundStyle(.red).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
+                    .frame(maxHeight: 110)
+            }
+            if !model.installMessage.isEmpty {
+                HStack(spacing: 10) {
+                    if model.isInstalling { ProgressView().controlSize(.small) }
+                    else if model.installSucceeded { Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.green) }
+                    Text(model.installMessage).font(.system(size: 13)).textSelection(.enabled)
+                }
+            }
+            HStack {
+                Spacer()
+                Button(model.installSucceeded ? "完成" : "关闭") { model.showInstallSheet = false }
+                    .keyboardShortcut(.cancelAction).disabled(model.isInstalling)
+                Button("安装到当前设备") { model.install() }
+                    .buttonStyle(.borderedProminent).disabled(!model.canInstall)
+            }
+        }
+        .padding(28).frame(width: 650)
+        .foregroundStyle(Palette.ink).tint(Palette.green)
+        .interactiveDismissDisabled(model.isInstalling)
     }
 }

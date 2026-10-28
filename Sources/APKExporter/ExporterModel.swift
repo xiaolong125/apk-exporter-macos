@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import APKExporterCore
+import UniformTypeIdentifiers
 
 struct ExporterNotice {
     let title: String
@@ -22,6 +23,13 @@ final class ExporterModel {
     var isLoading = false
     var isRefreshing = false
     var isExporting = false
+    var isInstalling = false
+    var showInstallSheet = false
+    var installPath = ""
+    var installPlan: InstallationPlan?
+    var installError: String?
+    var installMessage = ""
+    var installSucceeded = false
     var status = "连接 Android 手机，开始导出"
     var exportDetail = ""
     var progress: Double = 0
@@ -31,6 +39,7 @@ final class ExporterModel {
     private var loadTask: Task<Void, Never>?
     private var exportTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
+    private var installTask: Task<Void, Never>?
     private var generation = UUID()
     private let service: ADBService?
 
@@ -49,13 +58,15 @@ final class ExporterModel {
     }
     var readyDevice: AndroidDevice? { devices.first { $0.id == selectedDevice && $0.isReady } }
     var selectedPackages: [InstalledPackage] { packages.filter { selection.contains($0.id) } }
-    var canExport: Bool { readyDevice != nil && !selection.isEmpty && !isLoading && !isExporting && !isRefreshing }
+    var isBusy: Bool { isExporting || isInstalling }
+    var canExport: Bool { readyDevice != nil && !selection.isEmpty && !isLoading && !isBusy && !isRefreshing }
+    var canInstall: Bool { readyDevice != nil && installPlan != nil && !isLoading && !isBusy && !isRefreshing && !installSucceeded }
     var destinationLabel: String {
         destination.path.replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~")
     }
 
     func refresh() {
-        guard !isExporting, !isRefreshing else { return }
+        guard !isBusy, !isRefreshing else { return }
         guard let service else {
             showError("未找到 ADB。请使用完整的 APK Exporter.app，或安装 Android platform-tools。")
             return
@@ -79,6 +90,7 @@ final class ExporterModel {
     }
 
     func loadPackages() {
+        guard !isBusy else { return }
         loadTask?.cancel()
         generation = UUID()
         let current = generation
@@ -103,6 +115,7 @@ final class ExporterModel {
     }
 
     func chooseDestination() {
+        guard !isBusy else { return }
         let panel = NSOpenPanel()
         panel.title = "选择 APK 保存位置"
         panel.canChooseFiles = false
@@ -117,7 +130,7 @@ final class ExporterModel {
     }
 
     func export(_ items: [InstalledPackage]? = nil) {
-        guard !isExporting, !isLoading, let service, let device = readyDevice else { return }
+        guard !isBusy, !isLoading, !isRefreshing, let service, let device = readyDevice else { return }
         let apps = items ?? selectedPackages
         guard !apps.isEmpty else { return }
         isExporting = true
@@ -159,8 +172,65 @@ final class ExporterModel {
     }
 
     func clearSelection() {
-        guard !isExporting else { return }
+        guard !isBusy else { return }
         selection.removeAll()
+    }
+
+    func openInstaller(path: URL? = nil) {
+        guard !isBusy, !isLoading, !isRefreshing else { return }
+        installPath = path?.path ?? ""
+        prepareInstallation()
+        showInstallSheet = true
+    }
+
+    func chooseInstallationPath() {
+        guard !isInstalling else { return }
+        let panel = NSOpenPanel()
+        panel.title = "选择 APK 或单个应用的导出文件夹"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [UTType(filenameExtension: "apk") ?? .data]
+        panel.directoryURL = destination
+        panel.prompt = "选择并预览"
+        if panel.runModal() == .OK, let url = panel.url {
+            installPath = url.path
+            prepareInstallation()
+        }
+    }
+
+    func prepareInstallation() {
+        guard !isInstalling else { return }
+        installPlan = nil
+        installError = nil
+        installMessage = ""
+        installSucceeded = false
+        guard !installPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        do { installPlan = try InstallationPlan.resolve(path: installPath) }
+        catch { installError = error.localizedDescription }
+    }
+
+    func install() {
+        guard canInstall, let plan = installPlan, let service, let device = readyDevice else { return }
+        isInstalling = true
+        installError = nil
+        installMessage = "正在安装到 \(device.model)…请留意手机上的安装确认。"
+        status = "正在安装 \(plan.apkFiles.count) 个 APK 到 \(device.model)"
+        installTask = Task {
+            defer { isInstalling = false; installTask = nil }
+            do {
+                try await service.install(plan, device: device.id)
+                installSucceeded = true
+                installMessage = "安装成功：已将 \(plan.apkFiles.count) 个 APK 安装到 \(device.model)。"
+                status = "安装完成"
+                isInstalling = false
+                loadPackages()
+            } catch {
+                installMessage = ""
+                installError = error.localizedDescription
+                status = "安装失败，请查看安装窗口中的详情"
+            }
+        }
     }
 
     private func showError(_ message: String) {
